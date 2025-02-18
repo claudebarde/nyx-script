@@ -22,6 +22,7 @@ pub enum NyxType {
     Field,
     Maybe(Box<NyxType>),
     OpaqueString,
+    Struct(String, Box<NyxType>),
     Uint(usize),
     Vector(usize, Box<NyxType>),
     Void,
@@ -34,6 +35,7 @@ impl NyxType {
             NyxType::Field => "Field".to_string(),
             NyxType::Maybe(inner) => format!("Maybe<{}>", inner.print()),
             NyxType::OpaqueString => "Opaque<\"string\">".to_string(),
+            NyxType::Struct(name, type_args) => format!("{}<{}>", name, type_args.print()),
             NyxType::Uint(size) => format!("Uint<{}>", size),
             NyxType::Vector(size, inner) => format!("Vector<{}, {}>", size, inner.print()),
             NyxType::Void => "[]".to_string(),
@@ -99,6 +101,7 @@ impl AstNode {
                 NYX PATTERNS
             */
             AstNode::CustomTypeDef(_, _, pos) | AstNode::CustomType(_, pos) => {
+                // println!("self: {:#?}", self);
                 Err(ErrorMsg::NyxCustomPrint(pos))
             }
             AstNode::Empty => Ok("".to_string()),
@@ -303,9 +306,28 @@ impl AstNode {
         }
     }
 
-    pub fn to_type(self: AstNode) -> Result<NyxType, ErrorMsg> {
+    pub fn to_type(self: AstNode) -> Result<Vec<NyxType>, ErrorMsg> {
+        // println!("self: {:#?}", self);
         match self {
-            AstNode::Type(t, _) => Ok(t),
+            AstNode::Type(t, _) => Ok(vec![t]),
+            AstNode::StructType(name, type_args, _) => match name.as_str() {
+                "Maybe" => {
+                    let inner = type_args.to_type()?;
+                    let el_type = inner[0].clone();
+                    Ok(vec![NyxType::Maybe(Box::new(el_type))])
+                }
+                _ => todo!("cast struct type to NyxType"),
+            },
+            AstNode::TypeList(types, _) => {
+                let types = types
+                    .into_iter()
+                    .map(|x| x.to_type())
+                    .collect::<Result<Vec<Vec<NyxType>>, ErrorMsg>>()?
+                    .into_iter()
+                    .flatten()
+                    .collect();
+                Ok(types)
+            }
             _ => Err(ErrorMsg::InvalidType(self.print()?)),
         }
     }
@@ -1050,7 +1072,16 @@ fn tokenize(pair: Pair<'_, Rule>, depth: usize) -> Result<AstNode, ErrorMsg> {
                 .parse::<usize>()
                 .unwrap();
             let inner = tokenize(children.clone().nth(1).unwrap(), 0)?;
-            let el_type = inner.to_type()?;
+            let el_type_vec = inner.to_type()?;
+            // there should be only one element in the vector
+            if el_type_vec.len() != 1 {
+                return Err(ErrorMsg::UnexpectedLength(
+                    1,
+                    el_type_vec.len(),
+                    "vector_type".to_string(),
+                ));
+            }
+            let el_type = el_type_vec[0].clone();
 
             Ok(AstNode::Type(
                 NyxType::Vector(size, Box::new(el_type)),
@@ -1141,10 +1172,11 @@ pub fn transpile(input: AstNode, context: &mut Context) -> Result<AstNode, Error
                 None => return Ok(input),
                 Some(t) => {
                     let transpiled_type = transpile(*t, context)?;
+                    let transpiled_value = transpile(*value, context)?;
                     return Ok(AstNode::Const(
                         name,
                         Some(Box::new(transpiled_type)),
-                        value,
+                        Box::new(transpiled_value),
                         pos,
                     ));
                 }
@@ -1171,8 +1203,17 @@ pub fn transpile(input: AstNode, context: &mut Context) -> Result<AstNode, Error
             }
         }
         AstNode::CustomTypeDef(name, typ, _) => {
-            // records the custom type with its equivalent typeà
-            let custom_type = typ.to_type()?;
+            // records the custom type with its equivalent type
+            let custom_type_vec = typ.to_type()?;
+            // there should be only one element in the vector
+            if custom_type_vec.len() != 1 {
+                return Err(ErrorMsg::UnexpectedLength(
+                    1,
+                    custom_type_vec.len(),
+                    "custom_type_def_transpile".to_string(),
+                ));
+            }
+            let custom_type = custom_type_vec[0].clone();
             context.custom_types.insert(name, custom_type);
             // custom types are not output in the final contract
             return Ok(AstNode::Empty);
@@ -1211,6 +1252,9 @@ pub fn transpile(input: AstNode, context: &mut Context) -> Result<AstNode, Error
                 pos,
             ));
         }
+        AstNode::Type(nyx_type, pos) => {
+            return Ok(AstNode::Type(nyx_type, pos));
+        }
         AstNode::TypeList(list, pos) => {
             let transpiled_list = list
                 .into_iter()
@@ -1227,7 +1271,8 @@ pub fn transpile(input: AstNode, context: &mut Context) -> Result<AstNode, Error
                 pos,
             ));
         }
-        _ => return Ok(input),
+        _ => Ok(input),
+        // _ => todo!("implement transpile for {:#?}", input),
     }
 }
 
@@ -1249,7 +1294,73 @@ pub fn parse(input: &str) -> Result<Vec<AstNode>, ErrorMsg> {
         transpiled_ast.push(transpiled_node);
     }
 
-    println!("AST: \n{:#?}", transpiled_ast);
+    // println!("AST: \n{:#?}", transpiled_ast);
 
     return Ok(transpiled_ast);
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn transpile_custom_type1() {
+        let input = r"
+            type CustomType = Uint<32>;
+            const test: CustomType = 32;
+        ";
+        let expected_output = r"const test: Uint<32> = 32;";
+        match parse(input) {
+            Ok(ast) => {
+                let mut context = Context {
+                    custom_types: HashMap::new(),
+                };
+                let mut output = String::new();
+                for node in ast {
+                    let transpiled_node = transpile(node, &mut context).unwrap();
+                    output.push_str(&transpiled_node.print().unwrap());
+                }
+
+                // Normalize the strings by trimming whitespace and replacing newlines
+                let normalized_output = output.trim().replace("\r\n", "\n").replace("\r", "\n");
+                let normalized_expected_output = expected_output
+                    .trim()
+                    .replace("\r\n", "\n")
+                    .replace("\r", "\n");
+
+                assert_eq!(normalized_output, normalized_expected_output);
+            }
+            Err(e) => panic!("{:#?}", e),
+        }
+    }
+
+    #[test]
+    fn transpile_custom_type2() {
+        let input = r#"
+            type CustomType = Maybe<Opaque<"string">>;
+            const test: CustomType = none<CustomType>();
+        "#;
+        let expected_output =
+            r#"const test: Maybe<Opaque<"string">> = none<Maybe<Opaque<"string">>>();"#;
+        match parse(input) {
+            Ok(ast) => {
+                let mut output = String::new();
+                for node in ast {
+                    match node.print() {
+                        Ok(s) => output.push_str(&s),
+                        Err(e) => panic!("{:#?}", e),
+                    }
+                }
+                // Normalize the strings by trimming whitespace and replacing newlines
+                let normalized_output = output.trim().replace("\r\n", "\n").replace("\r", "\n");
+                let normalized_expected_output = expected_output
+                    .trim()
+                    .replace("\r\n", "\n")
+                    .replace("\r", "\n");
+
+                assert_eq!(normalized_output, normalized_expected_output);
+            }
+            Err(e) => panic!("{:#?}", e),
+        }
+    }
 }

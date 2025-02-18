@@ -8,7 +8,7 @@ COMMENT     =  { "//" ~ (!"\n" ~ ANY)* }
 
 nyx_type_def = { "type" ~ ident ~ "=" ~ type_ ~ SEMI_COLON* }
 // custom types must start with an uppercase letter and be followed by alphanumeric characters in lowercase
-nyx_custom_type = @{ ASCII_ALPHA_UPPER{1, } ~ ("_" | ASCII_ALPHA_LOWER | ASCII_DIGIT)+ }
+nyx_custom_type = @{ ASCII_ALPHA_UPPER{1, } ~ ("_" | ASCII_ALPHA | ASCII_DIGIT)+ }
 nyx_patterns = _{ nyx_type_def }
 
 /*

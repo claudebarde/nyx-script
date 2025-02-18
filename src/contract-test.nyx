@@ -35,7 +35,7 @@ export circuit take_down(): String {
     const former_msg = message.value;
     state = STATE.vacant;
     instance.increment(1);
-    message = none<String>();
+    message = none<Opaque<"string">>();
     return former_msg;
 }
 

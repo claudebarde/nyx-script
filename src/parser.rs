@@ -17,6 +17,7 @@ pub struct Position {
 
 #[derive(Debug, Clone)]
 pub enum NyxType {
+    Boolean,
     Bytes(usize),
     Counter,
     Field,
@@ -30,6 +31,7 @@ pub enum NyxType {
 impl NyxType {
     pub fn print(self: NyxType) -> String {
         match self {
+            NyxType::Boolean => "Boolean".to_string(),
             NyxType::Bytes(size) => format!("Bytes<{}>", size),
             NyxType::Counter => "Counter".to_string(),
             NyxType::Field => "Field".to_string(),
@@ -51,6 +53,7 @@ pub enum AstNode {
     CustomTypeDef(String, Box<AstNode>, Position), // name, type args, position
     CustomType(String, Position),                  // type, position
     Empty, // necessary to skip Nyx nodes that are not represented in the Compact grammar
+    PatternMatch(Box<AstNode>, Vec<(AstNode, AstNode)>, Position), // value, patterns, position
     /*
         COMPACT OFFICIAL GRAMMAR
     */
@@ -58,6 +61,7 @@ pub enum AstNode {
     Argument(String, Box<AstNode>, Position),              // name, type, position
     Assert(Box<AstNode>, String, Position),                // condition, message, position
     Block(Vec<AstNode>, Position),                         // list of statements, position
+    BooleanLiteral(bool, Position),                        // value, position
     Constructor(Vec<AstNode>, Box<AstNode>, Position),     // args, block, position
     CircuitDef(
         String,
@@ -73,6 +77,8 @@ pub enum AstNode {
     ExprAs(Box<AstNode>, Vec<AstNode>, Position), // value, vec of types, position
     FunCall(String, Option<Box<AstNode>>, Vec<AstNode>, Position), // name, optional return type, params, position
     Ident(String, Position),                                       // name, position
+    If(Box<AstNode>, Box<AstNode>, Position),                      // condition, block, position
+    IfElse(Box<AstNode>, Box<AstNode>, Box<AstNode>, Position), // condition, if block, else block, position
     Import(String, Position),
     LedgerDef(String, Box<AstNode>, Position), // name, type/ident, position
     PragmaLanguage(String, String, Position),
@@ -84,7 +90,7 @@ pub enum AstNode {
     Tuple(Vec<AstNode>, Position),                    // list of values, position
     Type(NyxType, Position),                          // type, position
     TypeList(Vec<AstNode>, Position),                 // list of types, position
-    UintLiteral(usize),                               // size
+    UintLiteral(usize, Position),                     // size
     VarAssignment(Box<AstNode>, Box<AstNode>, Position), // ident, value, position
     Wdecl(String, Box<AstNode>, Position),            // name, type, position
     EOI,
@@ -92,7 +98,10 @@ pub enum AstNode {
 impl AstNode {
     pub fn print(self: AstNode) -> Result<String, ErrorMsg> {
         fn tab(num: usize) -> String {
-            "   ".repeat(num)
+            if num <= 0 {
+                return "".to_string();
+            }
+            return "   ".repeat(num);
             // "*".repeat(num)
         }
 
@@ -102,9 +111,12 @@ impl AstNode {
             */
             AstNode::CustomTypeDef(_, _, pos) | AstNode::CustomType(_, pos) => {
                 // println!("self: {:#?}", self);
-                Err(ErrorMsg::NyxCustomPrint(pos))
+                Err(ErrorMsg::NyxCustomPrint(String::from("CustomTypeDef"), pos))
             }
             AstNode::Empty => Ok("".to_string()),
+            AstNode::PatternMatch(_, _, pos) => {
+                Err(ErrorMsg::NyxCustomPrint(String::from("PatternMatch"), pos))
+            }
             /*
                 COMPACT OFFICIAL GRAMMAR
             */
@@ -145,11 +157,16 @@ impl AstNode {
                     .collect::<Result<Vec<String>, ErrorMsg>>()?
                     .join("\n");
                 if statements.len() == 0 {
-                    Ok(format!("{}{{}}\n", tab(pos.depth)))
+                    Ok(format!("{{}}"))
                 } else {
-                    Ok(format!("{}{{\n{}\n}}\n", tab(pos.depth), block))
+                    Ok(format!(
+                        "{{\n{}\n{}}}",
+                        block,
+                        tab(pos.depth.saturating_sub(1))
+                    ))
                 }
             }
+            AstNode::BooleanLiteral(value, pos) => Ok(format!("{}{}", tab(pos.depth), value)),
             AstNode::CircuitDef(name, args, return_type, block, pos) => {
                 let args_list = match args {
                     None => "".to_string(),
@@ -229,9 +246,6 @@ impl AstNode {
                 left.print()?,
                 right.print()?
             )),
-            AstNode::Return(value, pos) => {
-                Ok(format!("{}return {};", tab(pos.depth), value.print()?))
-            }
             AstNode::FunCall(name, fun_type, params, pos) => {
                 let params_list = params
                     .iter()
@@ -244,6 +258,19 @@ impl AstNode {
                 }
             }
             AstNode::Ident(name, pos) => Ok(format!("{}{}", tab(pos.depth), name)),
+            AstNode::If(condition, if_block, pos) => Ok(format!(
+                "{}if ({}) {}",
+                tab(pos.depth),
+                condition.print()?,
+                if_block.print()?
+            )),
+            AstNode::IfElse(condition, if_block, else_block, pos) => Ok(format!(
+                "{}if ({}) {} else {}",
+                tab(pos.depth),
+                condition.print()?,
+                if_block.print()?,
+                else_block.print()?
+            )),
             AstNode::Import(import, pos) => Ok(format!("{}import {};", tab(pos.depth), import)),
             AstNode::LedgerDef(name, typ, pos) => Ok(format!(
                 "{}ledger {}: {}",
@@ -265,6 +292,9 @@ impl AstNode {
                 ident.print()?,
                 prop.print()?
             )),
+            AstNode::Return(value, pos) => {
+                Ok(format!("{}return {};", tab(pos.depth), value.print()?))
+            }
             AstNode::StringLiteral(value, pos) => Ok(format!("{}\"{}\"", tab(pos.depth), value)),
             AstNode::StructType(name, type_args, pos) => Ok(format!(
                 "{}{}<{}>",
@@ -289,7 +319,7 @@ impl AstNode {
                     .join(", ");
                 Ok(format!("{}{}", tab(pos.depth), args_list))
             }
-            AstNode::UintLiteral(size) => Ok(format!("{}", size)),
+            AstNode::UintLiteral(size, _) => Ok(format!("{}", size)),
             AstNode::VarAssignment(ident, value, pos) => Ok(format!(
                 "{}{} = {};",
                 tab(pos.depth),
@@ -303,6 +333,49 @@ impl AstNode {
                 typ.print()?
             )),
             AstNode::EOI => Ok("".to_string()),
+        }
+    }
+
+    fn get_pos(self) -> Position {
+        match self {
+            AstNode::CustomTypeDef(_, _, pos)
+            | AstNode::CustomType(_, pos)
+            | AstNode::PatternMatch(_, _, pos)
+            | AstNode::AdtOp(_, _, _, pos)
+            | AstNode::Argument(_, _, pos)
+            | AstNode::Assert(_, _, pos)
+            | AstNode::Block(_, pos)
+            | AstNode::BooleanLiteral(_, pos)
+            | AstNode::Constructor(_, _, pos)
+            | AstNode::CircuitDef(_, _, _, _, pos)
+            | AstNode::Const(_, _, _, pos)
+            | AstNode::EnumDef(_, _, pos)
+            | AstNode::Export(_, pos)
+            | AstNode::ExprEq(_, _, pos)
+            | AstNode::ExprAs(_, _, pos)
+            | AstNode::FunCall(_, _, _, pos)
+            | AstNode::Ident(_, pos)
+            | AstNode::If(_, _, pos)
+            | AstNode::IfElse(_, _, _, pos)
+            | AstNode::Import(_, pos)
+            | AstNode::LedgerDef(_, _, pos)
+            | AstNode::PragmaLanguage(_, _, pos)
+            | AstNode::PragmaCompiler(_, _, pos)
+            | AstNode::PropAccess(_, _, pos)
+            | AstNode::Return(_, pos)
+            | AstNode::StringLiteral(_, pos)
+            | AstNode::StructType(_, _, pos)
+            | AstNode::Tuple(_, pos)
+            | AstNode::Type(_, pos)
+            | AstNode::TypeList(_, pos)
+            | AstNode::UintLiteral(_, pos)
+            | AstNode::VarAssignment(_, _, pos)
+            | AstNode::Wdecl(_, _, pos) => pos,
+            AstNode::Empty | AstNode::EOI => Position {
+                line: 0,
+                column: 0,
+                depth: 0,
+            },
         }
     }
 
@@ -364,6 +437,36 @@ fn tokenize(pair: Pair<'_, Rule>, depth: usize) -> Result<AstNode, ErrorMsg> {
             let custom_type = pair.as_span().as_str().to_string();
             Ok(AstNode::CustomType(
                 custom_type,
+                Position {
+                    line,
+                    column,
+                    depth,
+                },
+            ))
+        }
+        Rule::pattern_match => {
+            let children = pair.clone().into_inner();
+            if children.len() < 2 {
+                return Err(ErrorMsg::UnexpectedLength(
+                    2,
+                    children.len(),
+                    "pattern_match".to_string(),
+                ));
+            }
+            let value = tokenize(children.clone().nth(0).unwrap(), 0)?;
+            let patterns = children
+                .skip(1)
+                .map(|x| {
+                    let pattern = x.into_inner();
+                    let left = tokenize(pattern.clone().nth(0).unwrap(), 0)?;
+                    let right = tokenize(pattern.clone().nth(1).unwrap(), depth + 1)?;
+                    Ok((left, right))
+                })
+                .collect::<Result<Vec<(AstNode, AstNode)>, ErrorMsg>>()?;
+
+            Ok(AstNode::PatternMatch(
+                Box::new(value),
+                patterns,
                 Position {
                     line,
                     column,
@@ -466,6 +569,18 @@ fn tokenize(pair: Pair<'_, Rule>, depth: usize) -> Result<AstNode, ErrorMsg> {
 
             Ok(AstNode::Block(
                 children,
+                Position {
+                    line,
+                    column,
+                    depth,
+                },
+            ))
+        }
+        Rule::boolean => {
+            let boolean = pair.as_str().parse::<bool>().unwrap();
+
+            Ok(AstNode::BooleanLiteral(
+                boolean,
                 Position {
                     line,
                     column,
@@ -824,6 +939,62 @@ fn tokenize(pair: Pair<'_, Rule>, depth: usize) -> Result<AstNode, ErrorMsg> {
                 },
             ))
         }
+        Rule::if_cond => {
+            let children = pair.clone().into_inner();
+            if children.len() != 2 {
+                return Err(ErrorMsg::UnexpectedLength(
+                    2,
+                    children.len(),
+                    "if_cond".to_string(),
+                ));
+            }
+            let condition = tokenize(children.clone().nth(0).unwrap(), depth)?;
+            let block = tokenize(children.clone().nth(1).unwrap(), depth + 1)?;
+
+            Ok(AstNode::If(
+                Box::new(condition),
+                Box::new(block),
+                Position {
+                    line,
+                    column,
+                    depth,
+                },
+            ))
+        }
+        Rule::if_else_cond => {
+            let children = pair.clone().into_inner();
+            if children.len() != 3 {
+                return Err(ErrorMsg::UnexpectedLength(
+                    3,
+                    children.len(),
+                    "if_else_cond".to_string(),
+                ));
+            }
+            let condition = tokenize(children.clone().nth(0).unwrap(), depth)?;
+            let if_block = tokenize(children.clone().nth(1).unwrap(), depth + 1)?;
+            let else_block = tokenize(children.clone().nth(2).unwrap(), depth + 1)?;
+
+            Ok(AstNode::Block(
+                vec![
+                    AstNode::Assert(
+                        Box::new(condition),
+                        "condition failed".to_string(),
+                        Position {
+                            line,
+                            column,
+                            depth,
+                        },
+                    ),
+                    if_block,
+                    else_block,
+                ],
+                Position {
+                    line,
+                    column,
+                    depth,
+                },
+            ))
+        }
         Rule::import => {
             // println!("{:#?}", pair);
             let atoms = pair.clone().into_inner();
@@ -1031,7 +1202,14 @@ fn tokenize(pair: Pair<'_, Rule>, depth: usize) -> Result<AstNode, ErrorMsg> {
         }
         Rule::uint => {
             let size = pair.as_str().parse::<usize>().unwrap();
-            Ok(AstNode::UintLiteral(size))
+            Ok(AstNode::UintLiteral(
+                size,
+                Position {
+                    line,
+                    column,
+                    depth,
+                },
+            ))
         }
         Rule::var_assignment => {
             let children = pair.clone().into_inner();
@@ -1244,6 +1422,86 @@ pub fn transpile(input: AstNode, context: &mut Context) -> Result<AstNode, Error
             let transpiled_type = transpile(*typ, context)?;
             return Ok(AstNode::LedgerDef(name, Box::new(transpiled_type), pos));
         }
+        AstNode::PatternMatch(value, patterns, pos) => {
+            // pattern matching is basically transpiled into if conditions
+            // 1 case = if condition { block }
+            // 2 cases = if condition { block } else { block }
+            // More than 2 cases = if condition { block } else if condition { block } else { block
+            let transpiled_value = transpile(*value, context)?;
+            // TODO: check that the value is an enum
+            if patterns.len() == 0 {
+                return Err(ErrorMsg::UnexpectedLength(
+                    1,
+                    0,
+                    "pattern_match".to_string(),
+                ));
+            } else if patterns.len() == 1 {
+                let (left, right) = patterns[0].clone();
+                let transpiled_left = transpile(left, context)?;
+                let transpiled_right = transpile(right, context)?;
+                return Ok(AstNode::If(
+                    Box::new(AstNode::ExprEq(
+                        Box::new(transpiled_value),
+                        Box::new(transpiled_left),
+                        Position {
+                            line: pos.line,
+                            column: pos.column,
+                            depth: 0,
+                        },
+                    )),
+                    Box::new(transpiled_right),
+                    pos,
+                ));
+            } else if patterns.len() == 2 {
+                let (left1, right1) = patterns[0].clone();
+                let (_left2, right2) = patterns[1].clone();
+                let transpiled_left1 = transpile(left1, context)?;
+                let transpiled_right1 = {
+                    let transpiled = transpile(right1, context)?;
+                    match transpiled.clone() {
+                        AstNode::Block(_, _) => transpiled,
+                        node => {
+                            let pos = node.get_pos();
+                            AstNode::Block(vec![transpiled], pos)
+                        }
+                    }
+                };
+                // let transpiled_left2 = transpile(left2, context)?;
+                let transpiled_right2 = {
+                    let transpiled = transpile(right2, context)?;
+                    match transpiled.clone() {
+                        AstNode::Block(_, _) => transpiled,
+                        node => {
+                            let pos = node.get_pos();
+                            AstNode::Block(
+                                vec![transpiled],
+                                Position {
+                                    line: pos.line,
+                                    column: pos.column,
+                                    depth: pos.depth,
+                                },
+                            )
+                        }
+                    }
+                };
+                return Ok(AstNode::IfElse(
+                    Box::new(AstNode::ExprEq(
+                        Box::new(transpiled_value.clone()),
+                        Box::new(transpiled_left1),
+                        Position {
+                            line: pos.line,
+                            column: pos.column,
+                            depth: 0,
+                        },
+                    )),
+                    Box::new(transpiled_right1),
+                    Box::new(transpiled_right2),
+                    pos,
+                ));
+            } else {
+                todo!("transpile pattern matching");
+            }
+        }
         AstNode::StructType(name, type_args, pos) => {
             let transpiled_type_args = transpile(*type_args, context)?;
             return Ok(AstNode::StructType(
@@ -1302,6 +1560,37 @@ pub fn parse(input: &str) -> Result<Vec<AstNode>, ErrorMsg> {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn parse_if1() {
+        let input = r"if (test == true) { return true; } ";
+        let expected_output = input;
+        match parse(input) {
+            Ok(ast) => {
+                let mut context = Context {
+                    custom_types: HashMap::new(),
+                };
+                let mut output = String::new();
+                for node in ast {
+                    let transpiled_node = transpile(node, &mut context).unwrap();
+                    output.push_str(&transpiled_node.print().unwrap());
+                }
+
+                // Normalize the strings by trimming whitespace and replacing newlines
+                let normalized_output = regex::Regex::new(r"(\n|\s)+")
+                    .unwrap()
+                    .replace_all(&output, " ")
+                    .to_string();
+                let normalized_expected_output = regex::Regex::new(r"(\n|\s)+")
+                    .unwrap()
+                    .replace_all(&expected_output, " ")
+                    .to_string();
+
+                assert_eq!(normalized_output, normalized_expected_output);
+            }
+            Err(e) => panic!("{:#?}", e),
+        }
+    }
 
     #[test]
     fn transpile_custom_type1() {

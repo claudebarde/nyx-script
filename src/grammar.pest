@@ -1,6 +1,7 @@
 SEMI_COLON  = _{ ";" }
 WHITESPACE  = _{ " " | "\t" | NEWLINE }
 COMMENT     =  { "//" ~ (!"\n" ~ ANY)* }
+keyword     = _{ "true" | "false" | "if" | "else" | "circuit" | "let" | "ledger" | "match" | "while" }
 
 /*
     NYX SUPERSET GRAMMAR
@@ -9,7 +10,9 @@ COMMENT     =  { "//" ~ (!"\n" ~ ANY)* }
 nyx_type_def = { "type" ~ ident ~ "=" ~ type_ ~ SEMI_COLON* }
 // custom types must start with an uppercase letter and be followed by alphanumeric characters in lowercase
 nyx_custom_type = @{ ASCII_ALPHA_UPPER{1, } ~ ("_" | ASCII_ALPHA | ASCII_DIGIT)+ }
-nyx_patterns = _{ nyx_type_def }
+pattern_match_branch = { "case" ~ prop_access ~ ":" ~ (block | statement) ~ "," }
+pattern_match = { "match" ~ "(" ~ expr ~ ")" ~ "{" ~ pattern_match_branch+ ~ "}" }
+nyx_patterns = _{ pattern_match | nyx_type_def }
 
 /*
     OFFICIAL COMPACT GRAMMAR
@@ -42,7 +45,7 @@ boolean = { "true" | "false" }
 lit = _{ uint | boolean | string | tuple }
 comp_op = { ">=" | "<=" | ">" | "<" }
 
-ident = @{ "_"* ~ ASCII_ALPHA+ ~ ("_" | ASCII_ALPHANUMERIC)* }
+ident = @{ !keyword ~ "_"* ~ ASCII_ALPHA+ ~ ("_" | ASCII_ALPHANUMERIC)* }
 prop_access = { ident ~ "." ~ ident ~ SEMI_COLON* }
 // TODO: adt_op can also have a type_list
 adt_op = { ident ~ "." ~ ident ~ "(" ~ expr? ~ ("," ~ expr)* ~ ")" ~ SEMI_COLON* }
@@ -119,20 +122,28 @@ const_type_stmt = { "const" ~ ident ~ ":" ~ type_ ~ "=" ~ expr ~ SEMI_COLON* }
 const = _{ const_type_stmt | const_stmt }
 // return
 fn_return = { "return" ~ expr ~ SEMI_COLON* }
+// if conditions
+if_cond = { "if" ~ "(" ~ expr ~ ")" ~ block }
+if_else_cond = { "if" ~ "(" ~ expr ~ ")" ~ block ~ "else" ~ block }
+if_else_if_cond = { "if" ~ "(" ~ expr ~ ")" ~ block ~ "else" ~ if_else_if_cond }
+condition = _{ if_else_if_cond | if_else_cond | if_cond }
 
 block = { "{" ~ (statement | expr)* ~ "}" }
 statement = _{ 
-    language_version 
+    nyx_patterns
+    | language_version 
     | compiler_version 
+    | condition
     | import 
     | export 
     | enumdef 
     | constructor 
-    | var_assignment 
     | wdecl
     | assert
     | const
     | fn_return
+    | circuit_def
+    | var_assignment 
 }
 
-program = _{ SOI ~ "\n"* ~ (nyx_patterns | statement | expr | COMMENT)+ ~ EOI }
+program = _{ SOI ~ "\n"* ~ (statement | expr | COMMENT)+ ~ EOI }

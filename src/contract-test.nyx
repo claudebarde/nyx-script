@@ -1,7 +1,8 @@
-enum COLOR { red, blue, green }
+type Color = enum COLOR { red, blue, green }
+export ledger color: Color;
 
 export circuit pattern_matching(): Uint<8> {
-    match (COLOR) {
+    match (color) {
         case COLOR.red: return 1,
         case COLOR.blue: return 2,
     }

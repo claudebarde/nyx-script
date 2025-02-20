@@ -39,13 +39,12 @@ fn main() {
             // light formatting
             let input =
                 fs::read_to_string(format!("src/{}.compact", file_name)).expect("cannot read file");
-            // println!(
-            //     "formatted input: {}",
 
-            // );
             let formatted = regex::Regex::new(r"\n{3,}")
                 .unwrap()
                 .replace_all(&input, "\n\n")
+                .to_string()
+                .trim_matches('\n')
                 .to_string();
             fs::write(format!("src/{}.compact", file_name), formatted)
                 .expect("cannot write to file");

@@ -20,6 +20,7 @@ pub enum NyxType {
     Boolean,
     Bytes(usize),
     Counter,
+    Enum(String, Vec<String>),
     Field,
     Maybe(Box<NyxType>),
     OpaqueString,
@@ -34,6 +35,7 @@ impl NyxType {
             NyxType::Boolean => "Boolean".to_string(),
             NyxType::Bytes(size) => format!("Bytes<{}>", size),
             NyxType::Counter => "Counter".to_string(),
+            NyxType::Enum(name, elements) => format!("enum {} {{ {} }}", name, elements.join(", ")),
             NyxType::Field => "Field".to_string(),
             NyxType::Maybe(inner) => format!("Maybe<{}>", inner.print()),
             NyxType::OpaqueString => "Opaque<\"string\">".to_string(),
@@ -113,12 +115,11 @@ impl AstNode {
                 // println!("self: {:#?}", self);
                 Err(ErrorMsg::NyxCustomPrint(String::from("CustomTypeDef"), pos))
             }
-            AstNode::Empty => Ok("".to_string()),
             AstNode::PatternMatch(_, _, pos) => {
                 Err(ErrorMsg::NyxCustomPrint(String::from("PatternMatch"), pos))
             }
             /*
-                COMPACT OFFICIAL GRAMMAR
+            COMPACT OFFICIAL GRAMMAR
             */
             AstNode::AdtOp(variable, method, type_args, pos) => {
                 let type_args_list = match type_args {
@@ -214,6 +215,7 @@ impl AstNode {
                     block.print()?
                 ))
             }
+            AstNode::Empty => Ok("".to_string()),
             AstNode::EnumDef(name, elements, pos) => Ok(format!(
                 "{}enum {} {{ {} }}",
                 tab(pos.depth),
@@ -401,6 +403,7 @@ impl AstNode {
                     .collect();
                 Ok(types)
             }
+            AstNode::EnumDef(name, elements, _) => Ok(vec![NyxType::Enum(name, elements)]),
             _ => Err(ErrorMsg::InvalidType(self.print()?)),
         }
     }
@@ -1377,10 +1380,16 @@ pub fn transpile(input: AstNode, context: &mut Context) -> Result<AstNode, Error
             // looks for the custom type in the custom types map
             match context.custom_types.get(&name) {
                 None => return Err(ErrorMsg::UnknownCustomType(name, pos)),
-                Some(t) => Ok(AstNode::Type(t.clone(), pos)),
+                Some(t) => {
+                    // the whole enum definition must not be printed
+                    match t {
+                        NyxType::Enum(name, _) => return Ok(AstNode::Ident(name.to_string(), pos)),
+                        _ => Ok(AstNode::Type(t.clone(), pos)),
+                    }
+                }
             }
         }
-        AstNode::CustomTypeDef(name, typ, _) => {
+        AstNode::CustomTypeDef(name, typ, pos) => {
             // records the custom type with its equivalent type
             let custom_type_vec = typ.to_type()?;
             // there should be only one element in the vector
@@ -1392,9 +1401,13 @@ pub fn transpile(input: AstNode, context: &mut Context) -> Result<AstNode, Error
                 ));
             }
             let custom_type = custom_type_vec[0].clone();
-            context.custom_types.insert(name, custom_type);
+            context.custom_types.insert(name, custom_type.clone());
             // custom types are not output in the final contract
-            return Ok(AstNode::Empty);
+            // except for enums
+            match custom_type {
+                NyxType::Enum(name, elements) => Ok(AstNode::EnumDef(name, elements, pos)),
+                _ => Ok(AstNode::Empty),
+            }
         }
         AstNode::Export(child, pos) => {
             let transpiled_node = transpile(*child, context)?;
@@ -1552,7 +1565,7 @@ pub fn parse(input: &str) -> Result<Vec<AstNode>, ErrorMsg> {
         transpiled_ast.push(transpiled_node);
     }
 
-    // println!("AST: \n{:#?}", transpiled_ast);
+    println!("Transpiled AST: \n{:#?}", transpiled_ast);
 
     return Ok(transpiled_ast);
 }

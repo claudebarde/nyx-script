@@ -34,6 +34,7 @@ type_ = {
     | vector_type
     | "[" ~ type_ ~ ("," ~ type_) ~ "]"
     | struct_type
+    | enumdef
     | nyx_custom_type
 }
 

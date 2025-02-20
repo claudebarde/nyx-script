@@ -4,7 +4,9 @@ export ledger color: COLOR;
 export circuit pattern_matching(): Uint<8> {
    if (color == COLOR.red) {
       return 1;
-   } else {
+   } else if (color == COLOR.blue) {
       return 2;
+   } else {
+      return 3;
    }
 }

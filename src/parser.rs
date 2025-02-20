@@ -81,6 +81,13 @@ pub enum AstNode {
     Ident(String, Position),                                       // name, position
     If(Box<AstNode>, Box<AstNode>, Position),                      // condition, block, position
     IfElse(Box<AstNode>, Box<AstNode>, Box<AstNode>, Position), // condition, if block, else block, position
+    IfElseIf(
+        Box<AstNode>,
+        Box<AstNode>,
+        Vec<(AstNode, AstNode)>,
+        Box<AstNode>,
+        Position,
+    ), // condition, if block, vector of (condition / else if), else block, position
     Import(String, Position),
     LedgerDef(String, Box<AstNode>, Position), // name, type/ident, position
     PragmaLanguage(String, String, Position),
@@ -273,6 +280,25 @@ impl AstNode {
                 if_block.print()?,
                 else_block.print()?
             )),
+            AstNode::IfElseIf(condition, if_block, else_if, else_block, pos) => {
+                let else_if_list = else_if
+                    .iter()
+                    .map(|(cond, block)| {
+                        let cond_str = cond.clone().print()?;
+                        let block_str = block.clone().print()?;
+                        Ok(format!("else if ({}) {}", cond_str, block_str))
+                    })
+                    .collect::<Result<Vec<String>, ErrorMsg>>()?
+                    .join(" ");
+                Ok(format!(
+                    "{}if ({}) {} {} else {}",
+                    tab(pos.depth),
+                    condition.print()?,
+                    if_block.print()?,
+                    else_if_list,
+                    else_block.print()?
+                ))
+            }
             AstNode::Import(import, pos) => Ok(format!("{}import {};", tab(pos.depth), import)),
             AstNode::LedgerDef(name, typ, pos) => Ok(format!(
                 "{}ledger {}: {}",
@@ -359,6 +385,7 @@ impl AstNode {
             | AstNode::Ident(_, pos)
             | AstNode::If(_, _, pos)
             | AstNode::IfElse(_, _, _, pos)
+            | AstNode::IfElseIf(_, _, _, _, pos)
             | AstNode::Import(_, pos)
             | AstNode::LedgerDef(_, _, pos)
             | AstNode::PragmaLanguage(_, _, pos)
@@ -1512,7 +1539,79 @@ pub fn transpile(input: AstNode, context: &mut Context) -> Result<AstNode, Error
                     pos,
                 ));
             } else {
-                todo!("transpile pattern matching");
+                println!("patterns: {:#?}", patterns);
+                let mut transpiled_patterns = patterns
+                    .into_iter()
+                    .map(|(left, right)| {
+                        let transpiled_left = transpile(left, context)?;
+                        let transpiled_right = transpile(right, context)?;
+                        Ok((transpiled_left, transpiled_right))
+                    })
+                    .collect::<Result<Vec<(AstNode, AstNode)>, ErrorMsg>>()?;
+                let else_block = {
+                    let block = transpiled_patterns.pop().unwrap();
+                    match block.1.clone() {
+                        AstNode::Block(_, _) => block,
+                        node => {
+                            let pos = node.get_pos();
+                            (block.0, AstNode::Block(vec![block.1], pos))
+                        }
+                    }
+                };
+                let if_block = {
+                    let block = transpiled_patterns.remove(0);
+                    match block.1.clone() {
+                        AstNode::Block(_, _) => block,
+                        node => {
+                            let pos = node.get_pos();
+                            (block.0, AstNode::Block(vec![block.1], pos))
+                        }
+                    }
+                };
+                let else_if_blocks = transpiled_patterns
+                    .into_iter()
+                    .map(|(left, right)| {
+                        let formatted_left = AstNode::ExprEq(
+                            Box::new(transpiled_value.clone()),
+                            Box::new(left),
+                            Position {
+                                line: pos.line,
+                                column: pos.column,
+                                depth: 0,
+                            },
+                        );
+                        let formatted_right = match right.clone() {
+                            AstNode::Block(_, _) => right,
+                            node => {
+                                let pos = node.get_pos();
+                                AstNode::Block(
+                                    vec![right],
+                                    Position {
+                                        line: pos.line,
+                                        column: pos.column,
+                                        depth: pos.depth,
+                                    },
+                                )
+                            }
+                        };
+                        Ok((formatted_left, formatted_right))
+                    })
+                    .collect::<Result<Vec<(AstNode, AstNode)>, ErrorMsg>>()?;
+                return Ok(AstNode::IfElseIf(
+                    Box::new(AstNode::ExprEq(
+                        Box::new(transpiled_value),
+                        Box::new(if_block.0),
+                        Position {
+                            line: pos.line,
+                            column: pos.column,
+                            depth: 0,
+                        },
+                    )),
+                    Box::new(if_block.1),
+                    else_if_blocks,
+                    Box::new(else_block.1),
+                    pos,
+                ));
             }
         }
         AstNode::StructType(name, type_args, pos) => {

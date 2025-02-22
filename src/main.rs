@@ -1,5 +1,7 @@
+mod checker;
 mod error;
 mod parser;
+mod transpiler;
 use regex;
 use std::fs::{self, OpenOptions};
 use std::io::Write;

@@ -1,10 +1,11 @@
-enum COLOR { red, blue, green }
+enum COLOR { blue, red, green }
 export ledger color: COLOR;
+export ledger instance: Counter;
 
 export circuit pattern_matching(): Uint<8> {
-   if (color == COLOR.red) {
+   if (instance == COLOR.red) {
       return 1;
-   } else if (color == COLOR.blue) {
+   } else if (instance == COLOR.blue) {
       return 2;
    } else {
       return 3;

@@ -1,9 +1,20 @@
+use crate::checker::{check, ToCheck};
 use crate::error::ErrorMsg;
 use crate::parser::{AstNode, NyxType, Position};
 use std::collections::HashMap;
 
+#[derive(Clone, Debug)]
+pub enum Scope {
+    Global,
+    Circuit(String),
+    Constructor,
+}
+
 pub struct Context {
-    pub custom_types: HashMap<String, NyxType>,
+    pub custom_types: HashMap<String, NyxType>, // enum + user custom types
+    pub ledger: HashMap<String, (NyxType, Position)>,
+    pub decl_vars: HashMap<String, (NyxType, Scope, Position)>,
+    pub current_scope: Scope,
 }
 
 /// Transpile the AST into an AST ready to be printed into official Compact
@@ -77,7 +88,7 @@ pub fn transpile(input: AstNode, context: &mut Context) -> Result<AstNode, Error
                 Some(t) => {
                     // the whole enum definition must not be printed
                     match t {
-                        NyxType::Enum(name, _) => return Ok(AstNode::Ident(name.to_string(), pos)),
+                        NyxType::Enum(name, _) => Ok(AstNode::Ident(name.to_string(), pos)),
                         _ => Ok(AstNode::Type(t.clone(), pos)),
                     }
                 }
@@ -94,7 +105,16 @@ pub fn transpile(input: AstNode, context: &mut Context) -> Result<AstNode, Error
                     "custom_type_def_transpile".to_string(),
                 ));
             }
-            let custom_type = custom_type_vec[0].clone();
+            let custom_type = match custom_type_vec[0].clone() {
+                NyxType::Enum(name, branches) => {
+                    // registers the enum in custom_types
+                    context
+                        .custom_types
+                        .insert(name.clone(), NyxType::Enum(name.clone(), branches.clone()));
+                    NyxType::Enum(name, branches)
+                }
+                val => val,
+            };
             context.custom_types.insert(name, custom_type.clone());
             // custom types are not output in the final contract
             // except for enums
@@ -102,6 +122,13 @@ pub fn transpile(input: AstNode, context: &mut Context) -> Result<AstNode, Error
                 NyxType::Enum(name, elements) => Ok(AstNode::EnumDef(name, elements, pos)),
                 _ => Ok(AstNode::Empty),
             }
+        }
+        AstNode::EnumDef(name, elements, pos) => {
+            // registers the enum in the custom types
+            context
+                .custom_types
+                .insert(name.clone(), NyxType::Enum(name.clone(), elements.clone()));
+            return Ok(AstNode::EnumDef(name, elements, pos));
         }
         AstNode::Export(child, pos) => {
             let transpiled_node = transpile(*child, context)?;
@@ -126,7 +153,45 @@ pub fn transpile(input: AstNode, context: &mut Context) -> Result<AstNode, Error
             }
         }
         AstNode::LedgerDef(name, typ, pos) => {
-            let transpiled_type = transpile(*typ, context)?;
+            let transpiled_type = transpile(*typ.clone(), context)?;
+            // println!("context custom types: {:#?}", context.custom_types);
+            let val_type = match transpiled_type.clone().to_type() {
+                Ok(t) => {
+                    if t.len() != 1 {
+                        return Err(ErrorMsg::UnexpectedLength(
+                            1,
+                            t.len(),
+                            "ledger_def_transpile".to_string(),
+                        ));
+                    }
+                    t.into_iter().nth(0).unwrap()
+                }
+                Err(err) => {
+                    match err {
+                        ErrorMsg::InvalidType(invalid_type) => {
+                            // looks for the string in the custom types
+                            match context.custom_types.get(&invalid_type) {
+                                None => return Err(ErrorMsg::UnknownType(invalid_type, pos)),
+                                Some(t) => match t {
+                                    NyxType::Enum(name, branches) => {
+                                        NyxType::Enum(name.to_string(), branches.clone())
+                                    }
+                                    _ => t.clone(),
+                                },
+                            }
+                        }
+                        _ => return Err(ErrorMsg::UnknownRule("ledger_def_transpile".to_string())),
+                    }
+                }
+            };
+            // records the variable in the ledger and decl_vars
+            context
+                .ledger
+                .insert(name.clone(), (val_type.clone(), pos.clone()));
+            context.decl_vars.insert(
+                name.clone(),
+                (val_type, context.current_scope.clone(), pos.clone()),
+            );
             return Ok(AstNode::LedgerDef(name, Box::new(transpiled_type), pos));
         }
         AstNode::PatternMatch(value, patterns, pos) => {
@@ -135,7 +200,7 @@ pub fn transpile(input: AstNode, context: &mut Context) -> Result<AstNode, Error
             // 2 cases = if condition { block } else { block }
             // More than 2 cases = if condition { block } else if condition { block } else { block
             let transpiled_value = transpile(*value, context)?;
-            println!("transpiled_value: {:#?}", transpiled_value);
+            let checked_value = check(transpiled_value, ToCheck::PatternMatchOverEnum, context)?;
             // TODO: check that the value is an enum
             if patterns.len() == 0 {
                 return Err(ErrorMsg::UnexpectedLength(
@@ -149,7 +214,7 @@ pub fn transpile(input: AstNode, context: &mut Context) -> Result<AstNode, Error
                 let transpiled_right = transpile(right, context)?;
                 return Ok(AstNode::If(
                     Box::new(AstNode::ExprEq(
-                        Box::new(transpiled_value),
+                        Box::new(checked_value),
                         Box::new(transpiled_left),
                         Position {
                             line: pos.line,
@@ -194,7 +259,7 @@ pub fn transpile(input: AstNode, context: &mut Context) -> Result<AstNode, Error
                 };
                 return Ok(AstNode::IfElse(
                     Box::new(AstNode::ExprEq(
-                        Box::new(transpiled_value.clone()),
+                        Box::new(checked_value.clone()),
                         Box::new(transpiled_left1),
                         Position {
                             line: pos.line,
@@ -240,7 +305,7 @@ pub fn transpile(input: AstNode, context: &mut Context) -> Result<AstNode, Error
                     .into_iter()
                     .map(|(left, right)| {
                         let formatted_left = AstNode::ExprEq(
-                            Box::new(transpiled_value.clone()),
+                            Box::new(checked_value.clone()),
                             Box::new(left),
                             Position {
                                 line: pos.line,
@@ -267,7 +332,7 @@ pub fn transpile(input: AstNode, context: &mut Context) -> Result<AstNode, Error
                     .collect::<Result<Vec<(AstNode, AstNode)>, ErrorMsg>>()?;
                 return Ok(AstNode::IfElseIf(
                     Box::new(AstNode::ExprEq(
-                        Box::new(transpiled_value),
+                        Box::new(checked_value),
                         Box::new(if_block.0),
                         Position {
                             line: pos.line,

@@ -1,6 +1,5 @@
-use crate::checker::{check, ToCheck};
 use crate::error::ErrorMsg;
-use crate::transpiler::{transpile, Context};
+use crate::transpiler::{transpile, Context, Scope};
 use pest::iterators::Pair;
 use pest::Parser;
 use pest_derive::Parser;
@@ -17,7 +16,7 @@ pub struct Position {
     pub depth: usize,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum NyxType {
     Boolean,
     Bytes(usize),
@@ -45,6 +44,13 @@ impl NyxType {
             NyxType::Uint(size) => format!("Uint<{}>", size),
             NyxType::Vector(size, inner) => format!("Vector<{}, {}>", size, inner.print()),
             NyxType::Void => "[]".to_string(),
+        }
+    }
+
+    pub fn is_enum(self: &NyxType) -> bool {
+        match self {
+            NyxType::Enum(_, _) => true,
+            _ => false,
         }
     }
 }
@@ -120,9 +126,13 @@ impl AstNode {
             /*
                 NYX PATTERNS
             */
-            AstNode::CustomTypeDef(_, _, pos) | AstNode::CustomType(_, pos) => {
+            AstNode::CustomTypeDef(_, _, pos) => {
                 // println!("self: {:#?}", self);
                 Err(ErrorMsg::NyxCustomPrint(String::from("CustomTypeDef"), pos))
+            }
+            AstNode::CustomType(_, pos) => {
+                // println!("self: {:#?}", self);
+                Err(ErrorMsg::NyxCustomPrint(String::from("CustomType"), pos))
             }
             AstNode::PatternMatch(_, _, pos) => {
                 Err(ErrorMsg::NyxCustomPrint(String::from("PatternMatch"), pos))
@@ -1343,7 +1353,13 @@ pub fn parse(input: &str) -> Result<Vec<AstNode>, ErrorMsg> {
 
     let mut context = Context {
         custom_types: HashMap::new(),
+        ledger: HashMap::new(),
+        decl_vars: HashMap::new(),
+        current_scope: Scope::Global,
     };
+
+    // println!("Raw AST: \n{:#?}", ast);
+
     let mut transpiled_ast: Vec<AstNode> = vec![];
     for node in ast {
         let transpiled_node = transpile(node, &mut context)?;
@@ -1367,6 +1383,9 @@ mod test {
             Ok(ast) => {
                 let mut context = Context {
                     custom_types: HashMap::new(),
+                    ledger: HashMap::new(),
+                    decl_vars: HashMap::new(),
+                    current_scope: Scope::Global,
                 };
                 let mut output = String::new();
                 for node in ast {
@@ -1401,6 +1420,9 @@ mod test {
             Ok(ast) => {
                 let mut context = Context {
                     custom_types: HashMap::new(),
+                    ledger: HashMap::new(),
+                    decl_vars: HashMap::new(),
+                    current_scope: Scope::Global,
                 };
                 let mut output = String::new();
                 for node in ast {

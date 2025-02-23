@@ -3,7 +3,7 @@ export ledger color: Color;
 export ledger instance: Counter;
 
 export circuit pattern_matching(): Uint<8> {
-    match (instance) {
+    match (color) {
         case COLOR.red: return 1,
         case COLOR.blue: return 2,
         case COLOR.green: return 3,

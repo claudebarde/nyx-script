@@ -195,21 +195,42 @@ pub fn transpile(input: AstNode, context: &mut Context) -> Result<AstNode, Error
             return Ok(AstNode::LedgerDef(name, Box::new(transpiled_type), pos));
         }
         AstNode::PatternMatch(value, patterns, pos) => {
+            // println!("value: {:#?} / patterns: {:#?}", value, patterns);
             // pattern matching is basically transpiled into if conditions
             // 1 case = if condition { block }
             // 2 cases = if condition { block } else { block }
             // More than 2 cases = if condition { block } else if condition { block } else { block
             let transpiled_value = transpile(*value, context)?;
+            let mut transpiled_patterns = patterns
+                .into_iter()
+                .map(|(left, right)| {
+                    let transpiled_left = transpile(left, context)?;
+                    let transpiled_right = transpile(right, context)?;
+                    Ok((transpiled_left, transpiled_right))
+                })
+                .collect::<Result<Vec<(AstNode, AstNode)>, ErrorMsg>>()?;
+            // all the transpiled patterns must be EnumAccess
+            for (left, _) in transpiled_patterns.clone() {
+                match left {
+                    AstNode::EnumAccess(_, _, _) => continue,
+                    _ => {
+                        return Err(ErrorMsg::PatternMatchNoEnum(
+                            left.clone().print()?,
+                            left.get_pos(),
+                        ))
+                    }
+                }
+            }
             let checked_value = check(transpiled_value, ToCheck::PatternMatchOverEnum, context)?;
             // TODO: check that the value is an enum
-            if patterns.len() == 0 {
+            if transpiled_patterns.len() == 0 {
                 return Err(ErrorMsg::UnexpectedLength(
                     1,
                     0,
                     "pattern_match".to_string(),
                 ));
-            } else if patterns.len() == 1 {
-                let (left, right) = patterns[0].clone();
+            } else if transpiled_patterns.len() == 1 {
+                let (left, right) = transpiled_patterns[0].clone();
                 let transpiled_left = transpile(left, context)?;
                 let transpiled_right = transpile(right, context)?;
                 return Ok(AstNode::If(
@@ -225,9 +246,9 @@ pub fn transpile(input: AstNode, context: &mut Context) -> Result<AstNode, Error
                     Box::new(transpiled_right),
                     pos,
                 ));
-            } else if patterns.len() == 2 {
-                let (left1, right1) = patterns[0].clone();
-                let (_left2, right2) = patterns[1].clone();
+            } else if transpiled_patterns.len() == 2 {
+                let (left1, right1) = transpiled_patterns[0].clone();
+                let (_left2, right2) = transpiled_patterns[1].clone();
                 let transpiled_left1 = transpile(left1, context)?;
                 let transpiled_right1 = {
                     let transpiled = transpile(right1, context)?;
@@ -273,14 +294,6 @@ pub fn transpile(input: AstNode, context: &mut Context) -> Result<AstNode, Error
                 ));
             } else {
                 // println!("patterns: {:#?}", patterns);
-                let mut transpiled_patterns = patterns
-                    .into_iter()
-                    .map(|(left, right)| {
-                        let transpiled_left = transpile(left, context)?;
-                        let transpiled_right = transpile(right, context)?;
-                        Ok((transpiled_left, transpiled_right))
-                    })
-                    .collect::<Result<Vec<(AstNode, AstNode)>, ErrorMsg>>()?;
                 let else_block = {
                     let block = transpiled_patterns.pop().unwrap();
                     match block.1.clone() {
@@ -345,6 +358,45 @@ pub fn transpile(input: AstNode, context: &mut Context) -> Result<AstNode, Error
                     Box::new(else_block.1),
                     pos,
                 ));
+            }
+        }
+        AstNode::PropAccess(name, prop, pos) => {
+            // it can be a property access or an enum access
+            let var_name = name.clone().from_ident()?;
+            match (
+                context.custom_types.get(&var_name),
+                context.ledger.get(&var_name),
+            ) {
+                (Some(ntype), None) => {
+                    match ntype {
+                        NyxType::Enum(enum_name, _) => {
+                            // enum access
+                            return Ok(AstNode::EnumAccess(
+                                Box::new(AstNode::Ident(enum_name.to_string(), pos.clone())),
+                                prop,
+                                pos,
+                            ));
+                        }
+                        _ => {
+                            // property access
+                            return Ok(AstNode::PropAccess(name, prop, pos));
+                        }
+                    }
+                }
+                (None, Some((ntype, _))) => {
+                    // ledger value
+                    match ntype {
+                        NyxType::Enum(_, _) => {
+                            // enum access
+                            return Ok(AstNode::EnumAccess(name, prop, pos));
+                        }
+                        _ => {
+                            // property access
+                            return Ok(AstNode::PropAccess(name, prop, pos));
+                        }
+                    }
+                }
+                _ => Ok(AstNode::PropAccess(name, prop, pos)),
             }
         }
         AstNode::StructType(name, type_args, pos) => {

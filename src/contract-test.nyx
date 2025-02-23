@@ -4,8 +4,8 @@ export ledger instance: Counter;
 
 export circuit pattern_matching(): Uint<8> {
     match (color) {
-        case COLOR.red: return 1,
-        case COLOR.blue: return 2,
-        case COLOR.green: return 3,
+        case Color.red: return 1,
+        case Color.blue: return 2,
+        case Color.green: return 3,
     }
 }

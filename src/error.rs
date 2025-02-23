@@ -9,6 +9,7 @@ pub enum ErrorMsg {
     UnexpectedEnumLength(usize),            // actual
     UnknownRule(String),
     UnknownType(String, Position),
+    NotAnIdent(String, Position),
     NyxCustomPrint(String, Position),
     UnknownCustomType(String, Position),
 }

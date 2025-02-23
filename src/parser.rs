@@ -4,6 +4,7 @@ use pest::iterators::Pair;
 use pest::Parser;
 use pest_derive::Parser;
 use std::collections::HashMap;
+use std::fmt::Error;
 
 #[derive(Parser)]
 #[grammar = "grammar.pest"]
@@ -81,6 +82,7 @@ pub enum AstNode {
         Position,
     ), // name, args, return type, block, position
     Const(String, Option<Box<AstNode>>, Box<AstNode>, Position), // name, optional type, value, position
+    EnumAccess(Box<AstNode>, Box<AstNode>, Position),            // ident, branch, position
     EnumDef(String, Vec<String>, Position),                      // name, elements, position
     Export(Box<AstNode>, Position),
     ExprEq(Box<AstNode>, Box<AstNode>, Position), // left, right, position
@@ -326,12 +328,9 @@ impl AstNode {
                 "pragma compiler_version {} {};\n",
                 comp_op, version
             )),
-            AstNode::PropAccess(ident, prop, pos) => Ok(format!(
-                "{}{}.{}",
-                tab(pos.depth),
-                ident.print()?,
-                prop.print()?
-            )),
+            AstNode::PropAccess(ident, prop, pos) | AstNode::EnumAccess(ident, prop, pos) => Ok(
+                format!("{}{}.{}", tab(pos.depth), ident.print()?, prop.print()?),
+            ),
             AstNode::Return(value, pos) => {
                 Ok(format!("{}return {};", tab(pos.depth), value.print()?))
             }
@@ -389,6 +388,7 @@ impl AstNode {
             | AstNode::Constructor(_, _, pos)
             | AstNode::CircuitDef(_, _, _, _, pos)
             | AstNode::Const(_, _, _, pos)
+            | AstNode::EnumAccess(_, _, pos)
             | AstNode::EnumDef(_, _, pos)
             | AstNode::Export(_, pos)
             | AstNode::ExprEq(_, _, pos)
@@ -444,6 +444,13 @@ impl AstNode {
             }
             AstNode::EnumDef(name, elements, _) => Ok(vec![NyxType::Enum(name, elements)]),
             _ => Err(ErrorMsg::InvalidType(self.print()?)),
+        }
+    }
+
+    pub fn from_ident(self) -> Result<String, ErrorMsg> {
+        match self {
+            AstNode::Ident(name, _) => Ok(name),
+            node => Err(ErrorMsg::NotAnIdent(node.clone().print()?, node.get_pos())),
         }
     }
 }

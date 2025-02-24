@@ -54,6 +54,13 @@ impl NyxType {
             _ => false,
         }
     }
+
+    pub fn get_enum_props(self) -> Vec<String> {
+        match self {
+            NyxType::Enum(_, props) => props,
+            _ => vec![],
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -451,6 +458,13 @@ impl AstNode {
         match self {
             AstNode::Ident(name, _) => Ok(name),
             node => Err(ErrorMsg::NotAnIdent(node.clone().print()?, node.get_pos())),
+        }
+    }
+
+    pub fn is_ident(self) -> bool {
+        match self {
+            AstNode::Ident(_, _) => true,
+            _ => false,
         }
     }
 }

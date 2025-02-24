@@ -221,8 +221,19 @@ pub fn transpile(input: AstNode, context: &mut Context) -> Result<AstNode, Error
                     }
                 }
             }
-            let checked_value = check(transpiled_value, ToCheck::PatternMatchOverEnum, context)?;
-            // TODO: check that the value is an enum
+            // checks that the value is an enum
+            let checked_value = check(
+                transpiled_value.clone(),
+                ToCheck::PatternMatchOverEnum,
+                context,
+            )?;
+            // checks that the pattern matching is exhaustive
+            check(
+                transpiled_value,
+                ToCheck::ExhaustiveMatch(transpiled_patterns.clone()),
+                context,
+            )?;
+
             if transpiled_patterns.len() == 0 {
                 return Err(ErrorMsg::UnexpectedLength(
                     1,

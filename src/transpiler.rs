@@ -172,7 +172,13 @@ pub fn transpile(input: AstNode, context: &mut Context) -> Result<AstNode, Error
                 .insert(name.clone(), NyxType::Enum(name.clone(), elements.clone()));
             return Ok(AstNode::EnumDef(name, elements, pos));
         }
-        AstNode::Export(child, _) => transpile(*child, context),
+        AstNode::Export(child, pos) => {
+            let transpiled_node = transpile(*child, context)?;
+            match transpiled_node.clone() {
+                AstNode::MultiExport(_, _) => Ok(transpiled_node),
+                _ => Ok(AstNode::Export(Box::new(transpiled_node), pos)),
+            }
+        }
         AstNode::FunCall(name, fun_type, params, pos) => {
             let transpiled_params = params
                 .into_iter()

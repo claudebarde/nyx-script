@@ -263,13 +263,15 @@ impl AstNode {
                 name,
                 elements.join(", ")
             )),
-            AstNode::Export(child, pos) => match *child {
-                AstNode::CircuitDef(_, _, _, _, _) => {
-                    // no semi-colon required
-                    Ok(format!("\n{}export {}", tab(pos.depth), child.print()?))
+            AstNode::Export(child, pos) => {
+                match *child {
+                    AstNode::CircuitDef(_, _, _, _, _) => {
+                        // no semi-colon required
+                        Ok(format!("\n{}export {}", tab(pos.depth), child.print()?))
+                    }
+                    _ => Ok(format!("{}export {};", tab(pos.depth), child.print()?)),
                 }
-                _ => Ok(format!("{}export {};", tab(pos.depth), child.print()?)),
-            },
+            }
             AstNode::ExprAs(value, types, pos) => {
                 let types_list = types
                     .iter()

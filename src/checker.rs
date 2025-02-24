@@ -11,8 +11,9 @@ fn all_strings_are_same(strings: &[String]) -> bool {
 }
 
 pub enum ToCheck {
-    PatternMatchOverEnum, // verifies pattern matching is done over an enum value
     ExhaustiveMatch(Vec<(AstNode, AstNode)>), // verifies that the pattern matching is exhaustive
+    IdentIsDeclared(String),                  // verifies that the identifier is declared
+    PatternMatchOverEnum, // verifies pattern matching is done over an enum value
 }
 
 /// Verifies that the AST nodes are correct
@@ -22,6 +23,19 @@ pub fn check(
     context: &mut Context,
 ) -> Result<AstNode, ErrorMsg> {
     match to_check {
+        ToCheck::IdentIsDeclared(ident) => {
+            // check if the identifier is declared
+            match context.decl_vars.get(&ident) {
+                Some(_) => Ok(input),
+                None => {
+                    // identifier could also be an enum
+                    match context.custom_types.get(&ident) {
+                        Some(_) => Ok(input),
+                        None => Err(ErrorMsg::UnknownVar(ident, input.get_pos())),
+                    }
+                }
+            }
+        }
         ToCheck::PatternMatchOverEnum => {
             // check if the pattern matching is done over an enum value
             match &input {
@@ -97,10 +111,7 @@ pub fn check(
                         if var.is_enum() {
                             let mut enum_props = var.clone().get_enum_props();
                             enum_props.sort();
-                            println!(
-                                "enum branches: {:?} / enum_props: {:#?}",
-                                enum_branches, enum_props
-                            );
+
                             if enum_branches.len() < enum_props.len() {
                                 return Err(ErrorMsg::PatternMatchMissingCase(
                                     enum_name,

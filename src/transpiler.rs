@@ -22,6 +22,20 @@ pub fn transpile(input: AstNode, context: &mut Context) -> Result<AstNode, Error
     match input.clone() {
         AstNode::Argument(name, typ, pos) => {
             let transpiled_type = transpile(*typ, context)?;
+            // the argument is registered in the declared variables
+            let t = transpiled_type.clone().to_type()?;
+            if t.len() != 1 {
+                return Err(ErrorMsg::UnexpectedLength(
+                    1,
+                    t.len(),
+                    "argument_transpile".to_string(),
+                ));
+            }
+            let arg_type = t.into_iter().nth(0).unwrap();
+            context.decl_vars.insert(
+                name.clone(),
+                (arg_type, context.current_scope.clone(), pos.clone()),
+            );
             return Ok(AstNode::Argument(name, Box::new(transpiled_type), pos));
         }
         AstNode::Block(statements, pos) => {
@@ -150,6 +164,12 @@ pub fn transpile(input: AstNode, context: &mut Context) -> Result<AstNode, Error
                     ));
                 }
                 None => return Ok(AstNode::FunCall(name, None, transpiled_params, pos)),
+            }
+        }
+        AstNode::Ident(ident, _) => {
+            match check(input.clone(), ToCheck::IdentIsDeclared(ident), context) {
+                Ok(_) => Ok(input),
+                Err(err) => Err(err),
             }
         }
         AstNode::LedgerDef(name, typ, pos) => {

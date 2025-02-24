@@ -1,7 +1,7 @@
 SEMI_COLON  = _{ ";" }
 WHITESPACE  = _{ " " | "\t" | NEWLINE }
 COMMENT     =  { "//" ~ (!"\n" ~ ANY)* }
-keyword     = _{ "true" | "false" | "if" | "else" | "circuit" | "let" | "ledger" | "match" | "while" }
+// keyword     = _{ "true" | "false" | "if" | "else" | "circuit" | "let" | "ledger" | "match" | "while" }
 
 /*
     NYX SUPERSET GRAMMAR
@@ -46,7 +46,7 @@ boolean = { "true" | "false" }
 lit = _{ uint | boolean | string | tuple }
 comp_op = { ">=" | "<=" | ">" | "<" }
 
-ident = @{ !keyword ~ "_"* ~ ASCII_ALPHA+ ~ ("_" | ASCII_ALPHANUMERIC)* }
+ident = @{ "_"* ~ ASCII_ALPHA+ ~ ("_" | ASCII_ALPHANUMERIC)* }
 prop_access = { ident ~ "." ~ ident ~ SEMI_COLON* }
 // TODO: adt_op can also have a type_list
 adt_op = { ident ~ "." ~ ident ~ "(" ~ expr? ~ ("," ~ expr)* ~ ")" ~ SEMI_COLON* }

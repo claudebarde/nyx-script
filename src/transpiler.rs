@@ -21,9 +21,37 @@ pub struct Context {
 pub fn transpile(input: AstNode, context: &mut Context) -> Result<AstNode, ErrorMsg> {
     match input.clone() {
         AstNode::Argument(name, typ, pos) => {
-            let transpiled_type = transpile(*typ, context)?;
+            let transpiled_type = match transpile(*typ, context) {
+                Ok(t) => Ok(t),
+                Err(err) => {
+                    match err {
+                        ErrorMsg::InvalidType(invalid_type, pos) => {
+                            // looks for the string in the custom types
+                            match context.custom_types.get(&invalid_type) {
+                                None => Err(ErrorMsg::UnknownType(invalid_type, pos.clone())),
+                                Some(t) => match t {
+                                    NyxType::Enum(name, _) => {
+                                        Ok(AstNode::Ident(name.to_string(), pos.clone()))
+                                    }
+                                    _ => todo!("Invalid type in argument"),
+                                },
+                            }
+                        }
+                        _ => Err(err),
+                    }
+                }
+            }?;
             // the argument is registered in the declared variables
-            let t = transpiled_type.clone().to_type()?;
+            let t = match transpiled_type.clone() {
+                AstNode::Ident(ident, pos) => {
+                    // the identifier may be an enum or a custom type
+                    match context.custom_types.get(&ident) {
+                        None => Err(ErrorMsg::InvalidType(ident, pos)),
+                        Some(t) => Ok(vec![t.clone()]),
+                    }
+                }
+                _ => transpiled_type.clone().to_type(),
+            }?;
             if t.len() != 1 {
                 return Err(ErrorMsg::UnexpectedLength(
                     1,
@@ -144,10 +172,7 @@ pub fn transpile(input: AstNode, context: &mut Context) -> Result<AstNode, Error
                 .insert(name.clone(), NyxType::Enum(name.clone(), elements.clone()));
             return Ok(AstNode::EnumDef(name, elements, pos));
         }
-        AstNode::Export(child, pos) => {
-            let transpiled_node = transpile(*child, context)?;
-            return Ok(AstNode::Export(Box::new(transpiled_node), pos));
-        }
+        AstNode::Export(child, _) => transpile(*child, context),
         AstNode::FunCall(name, fun_type, params, pos) => {
             let transpiled_params = params
                 .into_iter()
@@ -198,7 +223,7 @@ pub fn transpile(input: AstNode, context: &mut Context) -> Result<AstNode, Error
                 }
                 Err(err) => {
                     match err {
-                        ErrorMsg::InvalidType(invalid_type) => {
+                        ErrorMsg::InvalidType(invalid_type, pos) => {
                             // looks for the string in the custom types
                             match context.custom_types.get(&invalid_type) {
                                 None => return Err(ErrorMsg::UnknownType(invalid_type, pos)),
@@ -438,6 +463,40 @@ pub fn transpile(input: AstNode, context: &mut Context) -> Result<AstNode, Error
                     }
                 }
                 _ => Ok(AstNode::PropAccess(name, prop, pos)),
+            }
+        }
+        AstNode::StructDef(name, props, pos) => {
+            if name != "Ledger" {
+                Ok(AstNode::StructDef(name, props, pos))
+            } else {
+                // Ledger is a special struct
+                // each branch is turned into a ledger property
+                let transpiled_props = props
+                    .into_iter()
+                    .map(|arg| {
+                        if arg.is_argument() {
+                            let transpiled_arg = transpile(arg, context)?;
+                            match transpiled_arg {
+                                AstNode::Argument(name, typ, pos) => {
+                                    Ok(AstNode::LedgerDef(name, typ, pos))
+                                }
+                                _ => Err(ErrorMsg::UnexpectedNode(
+                                    String::from("Argument"),
+                                    transpiled_arg,
+                                    pos.clone(),
+                                )),
+                            }
+                        } else {
+                            Err(ErrorMsg::UnexpectedNode(
+                                String::from("Argument"),
+                                arg,
+                                pos.clone(),
+                            ))
+                        }
+                    })
+                    .collect::<Result<Vec<AstNode>, ErrorMsg>>()?;
+
+                Ok(AstNode::MultiExport(transpiled_props, pos))
             }
         }
         AstNode::StructType(name, type_args, pos) => {

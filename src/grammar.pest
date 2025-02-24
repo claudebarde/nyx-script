@@ -34,7 +34,6 @@ type_ = {
     | vector_type
     | "[" ~ type_ ~ ("," ~ type_) ~ "]"
     | struct_type
-    | enumdef
     | nyx_custom_type
 }
 
@@ -94,7 +93,7 @@ compiler_version = {
 }
 import = { "import" ~ ident ~ SEMI_COLON }
 ledger_def = { "ledger" ~ ident ~ ":" ~ (type_ | ident) ~ SEMI_COLON }
-argument = { ident ~ ":" ~ type_ }
+argument = { ident ~ ":" ~ (type_ | ident) }
 circuit_def = { 
     "circuit" 
     ~ ident 
@@ -104,7 +103,8 @@ circuit_def = {
     ~ block
 }
 enumdef = { "enum" ~ ident ~ "{" ~ ident ~ ("," ~ ident)* ~ "}" }
-export = { "export" ~ (ledger_def | circuit_def | enumdef) }
+structdef = { "struct" ~ ident ~ "{" ~ (argument ~ ",")+ ~ "}" }
+export = { "export" ~ (ledger_def | circuit_def | enumdef | structdef) }
 var_assignment = { ident ~ "=" ~ expr ~ SEMI_COLON* }
 // witness declaration
 wdecl = { 

@@ -1,8 +1,8 @@
-use crate::parser::{NyxType, Position};
+use crate::parser::{AstNode, NyxType, Position};
 
 #[derive(Debug)]
 pub enum ErrorMsg {
-    InvalidType(String),                               // type
+    InvalidType(String, Position),                     // type, position
     IdentIsKeyword(String, Position),                  // ident, position
     PatternMatchDifferentEnums(Vec<String>, Position), // position
     PatternMatchMissingCase(String, Position),         // value, position
@@ -13,6 +13,7 @@ pub enum ErrorMsg {
     PatternMatchWrongCases(String, Position),          // value, position
     UnexpectedLength(usize, usize, String),            // expected, actual, rule
     UnexpectedEnumLength(usize),                       // actual
+    UnexpectedNode(String, AstNode, Position),         // expected, actual, position
     UnexpectedType(NyxType, NyxType, Position),        // expected, actual, position
     UnknownRule(String),
     UnknownType(String, Position),

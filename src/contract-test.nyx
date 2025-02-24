@@ -1,11 +1,13 @@
-type Color = enum COLOR { blue, red, green }
-export ledger color: Color;
-export ledger instance: Counter;
+enum COLOR { blue, red, green }
+export struct Ledger {
+    color: COLOR,
+    instance: Counter,
+}
 
 export circuit pattern_matching(): Uint<8> {
     match (color) {
-        case Color.red: return 1,
-        case Color.blue: return 2,
-        case Color.green: return 3,
+        case COLOR.red: return 1,
+        case COLOR.blue: return 2,
+        case COLOR.green: return 3,
     }
 }

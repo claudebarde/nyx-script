@@ -71,6 +71,7 @@ pub enum AstNode {
     CustomTypeDef(String, Box<AstNode>, Position), // name, type args, position
     CustomType(String, Position),                  // type, position
     Empty, // necessary to skip Nyx nodes that are not represented in the Compact grammar
+    MultiExport(Vec<AstNode>, Position), // list of exports, position to spread Ledger struct
     PatternMatch(Box<AstNode>, Vec<(AstNode, AstNode)>, Position), // value, patterns, position
     /*
         COMPACT OFFICIAL GRAMMAR
@@ -112,6 +113,7 @@ pub enum AstNode {
     PropAccess(Box<AstNode>, Box<AstNode>, Position), // ident, property, position
     Return(Box<AstNode>, Position),                   // value, position
     StringLiteral(String, Position),                  // value, position
+    StructDef(String, Vec<AstNode>, Position),        // name, type args, position
     StructType(String, Box<AstNode>, Position),       // name, type args, position
     Tuple(Vec<AstNode>, Position),                    // list of values, position
     Type(NyxType, Position),                          // type, position
@@ -142,6 +144,17 @@ impl AstNode {
             AstNode::CustomType(_, pos) => {
                 // println!("self: {:#?}", self);
                 Err(ErrorMsg::NyxCustomPrint(String::from("CustomType"), pos))
+            }
+            AstNode::MultiExport(exports, pos) => {
+                let exports_list = exports
+                    .iter()
+                    .map(|x| x.clone().print())
+                    .collect::<Result<Vec<String>, ErrorMsg>>()?
+                    .into_iter()
+                    .map(|x| format!("{}export {};", tab(pos.depth), x))
+                    .collect::<Vec<String>>()
+                    .join("\n");
+                Ok(format!("{}{}\n", exports_list, tab(pos.depth)))
             }
             AstNode::PatternMatch(_, _, pos) => {
                 Err(ErrorMsg::NyxCustomPrint(String::from("PatternMatch"), pos))
@@ -342,6 +355,22 @@ impl AstNode {
                 Ok(format!("{}return {};", tab(pos.depth), value.print()?))
             }
             AstNode::StringLiteral(value, pos) => Ok(format!("{}\"{}\"", tab(pos.depth), value)),
+            AstNode::StructDef(name, type_args, pos) => {
+                let type_args_list = type_args
+                    .iter()
+                    .map(|x| x.clone().print())
+                    .collect::<Result<Vec<String>, ErrorMsg>>()?
+                    .into_iter()
+                    .map(|x| format!("{}{}", tab(pos.depth + 1), x))
+                    .collect::<Vec<String>>()
+                    .join(",\n");
+                Ok(format!(
+                    "{}struct {} {{ \n{}\n}}",
+                    tab(pos.depth),
+                    name,
+                    type_args_list
+                ))
+            }
             AstNode::StructType(name, type_args, pos) => Ok(format!(
                 "{}{}<{}>",
                 tab(pos.depth),
@@ -407,11 +436,13 @@ impl AstNode {
             | AstNode::IfElseIf(_, _, _, _, pos)
             | AstNode::Import(_, pos)
             | AstNode::LedgerDef(_, _, pos)
+            | AstNode::MultiExport(_, pos)
             | AstNode::PragmaLanguage(_, _, pos)
             | AstNode::PragmaCompiler(_, _, pos)
             | AstNode::PropAccess(_, _, pos)
             | AstNode::Return(_, pos)
             | AstNode::StringLiteral(_, pos)
+            | AstNode::StructDef(_, _, pos)
             | AstNode::StructType(_, _, pos)
             | AstNode::Tuple(_, pos)
             | AstNode::Type(_, pos)
@@ -450,7 +481,7 @@ impl AstNode {
                 Ok(types)
             }
             AstNode::EnumDef(name, elements, _) => Ok(vec![NyxType::Enum(name, elements)]),
-            _ => Err(ErrorMsg::InvalidType(self.print()?)),
+            _ => Err(ErrorMsg::InvalidType(self.clone().print()?, self.get_pos())),
         }
     }
 
@@ -461,9 +492,16 @@ impl AstNode {
         }
     }
 
-    pub fn is_ident(self) -> bool {
+    pub fn is_ident(&self) -> bool {
         match self {
             AstNode::Ident(_, _) => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_argument(&self) -> bool {
+        match self {
+            AstNode::Argument(_, _, _) => true,
             _ => false,
         }
     }
@@ -1184,6 +1222,31 @@ fn tokenize(pair: Pair<'_, Rule>, depth: usize) -> Result<AstNode, ErrorMsg> {
                 },
             ))
         }
+        Rule::structdef => {
+            let children = pair.clone().into_inner();
+            if children.len() < 2 {
+                return Err(ErrorMsg::UnexpectedLength(
+                    2,
+                    children.len(),
+                    "structdef".to_string(),
+                ));
+            }
+            let struct_name = children.clone().nth(0).unwrap().as_str().to_string();
+            let type_args = children
+                .skip(1)
+                .map(|x| tokenize(x, depth))
+                .collect::<Result<Vec<AstNode>, ErrorMsg>>()?;
+
+            Ok(AstNode::StructDef(
+                struct_name,
+                type_args,
+                Position {
+                    line,
+                    column,
+                    depth,
+                },
+            ))
+        }
         Rule::tuple => {
             let tuple_children = pair.clone().into_inner();
             let tuple = tuple_children
@@ -1358,7 +1421,7 @@ fn tokenize(pair: Pair<'_, Rule>, depth: usize) -> Result<AstNode, ErrorMsg> {
         Rule::EOI => Ok(AstNode::EOI),
         _ => {
             println!("{:#?}", pair);
-            Err(ErrorMsg::UnknownRule(pair.as_str().to_string()))
+            Err(ErrorMsg::UnknownRule(format!("{:#?}", pair.as_rule())))
         }
     }
 }

@@ -3,6 +3,7 @@ use crate::parser::{NyxType, Position};
 #[derive(Debug)]
 pub enum ErrorMsg {
     InvalidType(String),                               // type
+    IdentIsKeyword(String, Position),                  // ident, position
     PatternMatchDifferentEnums(Vec<String>, Position), // position
     PatternMatchMissingCase(String, Position),         // value, position
     PatternMatchNoIdent(String, Position),             // value, position

@@ -167,13 +167,23 @@ pub fn transpile(input: AstNode, context: &mut Context) -> Result<AstNode, Error
             }
         }
         AstNode::Ident(ident, _) => {
-            match check(input.clone(), ToCheck::IdentIsDeclared(ident), context) {
-                Ok(_) => Ok(input),
+            // checks if the ident is declared
+            match check(
+                input.clone(),
+                ToCheck::IdentIsDeclared(ident.clone()),
+                context,
+            ) {
+                Ok(node) => {
+                    // checks if the ident is a keyword
+                    check(node, ToCheck::IdentIsCorrect(ident), context)
+                }
                 Err(err) => Err(err),
             }
         }
         AstNode::LedgerDef(name, typ, pos) => {
             let transpiled_type = transpile(*typ.clone(), context)?;
+            // checks if the ident is correct
+            let _ = check(input, ToCheck::IdentIsCorrect(name.clone()), context)?;
             // println!("context custom types: {:#?}", context.custom_types);
             let val_type = match transpiled_type.clone().to_type() {
                 Ok(t) => {

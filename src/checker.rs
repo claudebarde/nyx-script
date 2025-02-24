@@ -10,9 +10,24 @@ fn all_strings_are_same(strings: &[String]) -> bool {
     strings.iter().all(|s| s == first)
 }
 
+const KEYWORDS: [&str; 11] = [
+    "if",
+    "else",
+    "while",
+    "for",
+    "return",
+    "true",
+    "false",
+    "constructor",
+    "witness",
+    "circuit",
+    "export",
+];
+
 pub enum ToCheck {
     ExhaustiveMatch(Vec<(AstNode, AstNode)>), // verifies that the pattern matching is exhaustive
     IdentIsDeclared(String),                  // verifies that the identifier is declared
+    IdentIsCorrect(String),                   // verifies that the identifier is correct
     PatternMatchOverEnum, // verifies pattern matching is done over an enum value
 }
 
@@ -23,6 +38,14 @@ pub fn check(
     context: &mut Context,
 ) -> Result<AstNode, ErrorMsg> {
     match to_check {
+        ToCheck::IdentIsCorrect(ident) => {
+            // check if the identifier is correct
+            if KEYWORDS.contains(&ident.as_str()) {
+                Err(ErrorMsg::IdentIsKeyword(ident, input.get_pos()))
+            } else {
+                Ok(input)
+            }
+        }
         ToCheck::IdentIsDeclared(ident) => {
             // check if the identifier is declared
             match context.decl_vars.get(&ident) {

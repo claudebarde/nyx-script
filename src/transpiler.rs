@@ -15,6 +15,9 @@ pub struct Context {
     pub ledger: HashMap<String, (NyxType, Position)>,
     pub decl_vars: HashMap<String, (NyxType, Scope, Position)>,
     pub current_scope: Scope,
+    pub standard_library_import: bool,
+    pub has_language_version: bool,
+    pub language_version: String,
 }
 
 /// Transpile the AST into an AST ready to be printed into official Compact
@@ -210,6 +213,13 @@ pub fn transpile(input: AstNode, context: &mut Context) -> Result<AstNode, Error
                 }
                 Err(err) => Err(err),
             }
+        }
+        AstNode::Import(name, pos) => {
+            // the standard library is imported by default
+            if name == "CompactStandardLibrary" {
+                context.standard_library_import = true;
+            }
+            return Ok(AstNode::Import(name, pos));
         }
         AstNode::LedgerDef(name, typ, pos) => {
             let transpiled_type = transpile(*typ.clone(), context)?;
@@ -432,6 +442,10 @@ pub fn transpile(input: AstNode, context: &mut Context) -> Result<AstNode, Error
                 ));
             }
         }
+        AstNode::PragmaLanguage(comp, version, pos) => {
+            context.has_language_version = true;
+            Ok(AstNode::PragmaLanguage(comp, version, pos))
+        }
         AstNode::PropAccess(name, prop, pos) => {
             // it can be a property access or an enum access
             let var_name = name.clone().from_ident()?;
@@ -535,4 +549,26 @@ pub fn transpile(input: AstNode, context: &mut Context) -> Result<AstNode, Error
         _ => Ok(input),
         // _ => todo!("implement transpile for {:#?}", input),
     }
+}
+
+pub fn auto_fills(ast: Vec<AstNode>, context: &mut Context) -> Vec<AstNode> {
+    let mut optimized_ast = ast;
+    // adds import for standard library if it is missing
+    if context.standard_library_import == false {
+        let std_import_node =
+            AstNode::Import(String::from("CompactStandardLibrary"), Position::default());
+        optimized_ast = vec![vec![std_import_node], optimized_ast].concat();
+    }
+    println!("Autofills AST: \n{:#?}", context.standard_library_import);
+    // adds pragma languge version if unavailable
+    if context.has_language_version == false {
+        let pragma_lang = AstNode::PragmaLanguage(
+            String::from(">="),
+            context.language_version.clone(),
+            Position::default(),
+        );
+        optimized_ast = vec![vec![pragma_lang], optimized_ast].concat();
+    }
+
+    return optimized_ast;
 }

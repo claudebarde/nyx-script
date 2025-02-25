@@ -1,5 +1,5 @@
 use crate::error::ErrorMsg;
-use crate::transpiler::{transpile, Context, Scope};
+use crate::transpiler::{auto_fills, transpile, Context, Scope};
 use pest::iterators::Pair;
 use pest::Parser;
 use pest_derive::Parser;
@@ -15,6 +15,15 @@ pub struct Position {
     pub line: usize,
     pub column: usize,
     pub depth: usize,
+}
+impl Position {
+    pub fn default() -> Position {
+        Position {
+            line: 0,
+            column: 0,
+            depth: 0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -335,7 +344,7 @@ impl AstNode {
                     else_block.print()?
                 ))
             }
-            AstNode::Import(import, pos) => Ok(format!("{}import {};", tab(pos.depth), import)),
+            AstNode::Import(import, pos) => Ok(format!("{}import {};\n", tab(pos.depth), import)),
             AstNode::LedgerDef(name, typ, pos) => Ok(format!(
                 "{}ledger {}: {}",
                 tab(pos.depth),
@@ -1442,6 +1451,9 @@ pub fn parse(input: &str) -> Result<Vec<AstNode>, ErrorMsg> {
         ledger: HashMap::new(),
         decl_vars: HashMap::new(),
         current_scope: Scope::Global,
+        standard_library_import: false,
+        has_language_version: false,
+        language_version: String::from("0.14.0"),
     };
 
     // println!("Raw AST: \n{:#?}", ast);
@@ -1451,6 +1463,7 @@ pub fn parse(input: &str) -> Result<Vec<AstNode>, ErrorMsg> {
         let transpiled_node = transpile(node, &mut context)?;
         transpiled_ast.push(transpiled_node);
     }
+    transpiled_ast = auto_fills(transpiled_ast, &mut context);
 
     // println!("Transpiled AST: \n{:#?}", transpiled_ast);
 
@@ -1472,6 +1485,9 @@ mod test {
                     ledger: HashMap::new(),
                     decl_vars: HashMap::new(),
                     current_scope: Scope::Global,
+                    standard_library_import: false,
+                    has_language_version: false,
+                    language_version: String::from("0.14.0"),
                 };
                 let mut output = String::new();
                 for node in ast {
@@ -1509,6 +1525,9 @@ mod test {
                     ledger: HashMap::new(),
                     decl_vars: HashMap::new(),
                     current_scope: Scope::Global,
+                    standard_library_import: false,
+                    has_language_version: false,
+                    language_version: String::from("0.14.0"),
                 };
                 let mut output = String::new();
                 for node in ast {

@@ -1,6 +1,11 @@
+pragma language_version >= 0.14.0;
+
+import CompactStandardLibrary;
+
 enum COLOR { blue, red, green }
 export ledger color: COLOR;
 export ledger instance: Counter;
+export ledger poster: Bytes<32>;
 
 export circuit pattern_matching(): Uint<8> {
    if (color == COLOR.red) {
